@@ -7,80 +7,111 @@ Original file is located at
     https://colab.research.google.com/drive/1PRg_N01jzUjkwlGPM13cJlne6qheDAh_
 """
 
+# ==============================
+#  Import Libraries & Load Data
+# ==============================
 import pandas as pd
-df=pd.read_csv('/kaggle/input/nlp-ulta-skincare-reviews/Ulta Skincare Reviews.csv')
+# Load dataset from Kaggle path
+df = pd.read_csv('/kaggle/input/nlp-ulta-skincare-reviews/Ulta Skincare Reviews.csv')
 df.head()
 
-df=df.dropna()
+# Drop missing values to keep data clean
+df = df.dropna()
 
+
+# ==============================
+# 🧹 Text Cleaning (Regex)
+# ==============================
 import spacy
 import re
 
+# Function: remove non-alphabet characters, lowercase, remove extra spaces
 def clean_text(text):
-    cleaned = re.sub(r'[^a-zA-Z\s]', '', text)
-    cleaned = cleaned.lower()
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    cleaned = re.sub(r'[^a-zA-Z\s]', '', text)  # keep only letters
+    cleaned = cleaned.lower()                   # convert to lowercase
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()  # remove extra spaces
     return cleaned
 
-# Apply function on the column
+# Apply cleaning to review text and title
 df['Review_Text'] = df['Review_Text'].apply(clean_text)
 df['Review_Title'] = df['Review_Title'].apply(clean_text)
 
 df.head(10)
 
+
+# ==============================
+# 🧹 Text Preprocessing with spaCy
+# ==============================
 nlp = spacy.load('en_core_web_sm')
-import spacy
 
-
+# Function: lemmatization + remove stopwords, punctuation, numbers
 def clean_text(text):
     doc = nlp(text)
     tokens = [
         token.lemma_.lower()
         for token in doc
-        if not token.is_stop
-        and not token.is_punct
-        and not token.is_space
-        and not token.like_num
+        if not token.is_stop     # remove stopwords
+        and not token.is_punct   # remove punctuation
+        and not token.is_space   # remove empty spaces
+        and not token.like_num   # remove numbers
     ]
     return " ".join(tokens)
+
+# Apply new cleaning function
 df['Review_Text'] = df['Review_Text'].apply(clean_text)
 df['Review_Title'] = df['Review_Title'].apply(clean_text)
 
 df.head()
 
+
+# ==============================
+# 🔍 Detect Odd Symbols
+# ==============================
+# Function: find non-alphanumeric characters in text
 def find_odd_symbols(text):
-    if pd.isnull(text):  # Check for NaN
+    if pd.isnull(text):  # handle NaN
         return []
     return re.findall(r'[^a-zA-Z0-9\s]', text)
 
-# Apply to Review_Title and Review_Text columns
+# Apply to both columns
 df['odd_symbols_title'] = df['Review_Title'].apply(find_odd_symbols)
 df['odd_symbols_text'] = df['Review_Text'].apply(find_odd_symbols)
 
-# (Optional) Show rows that contain any odd symbols
+# Filter rows containing odd symbols
 df_with_odd = df[
     (df['odd_symbols_title'].str.len() > 0) |
     (df['odd_symbols_text'].str.len() > 0)
 ]
 
-# View relevant columns
+# Show suspicious rows
 print(df_with_odd[['Review_Title', 'Review_Text', 'odd_symbols_title', 'odd_symbols_text']])
 
+
+# ==============================
+# 🔠 Feature Engineering: TF-IDF
+# ==============================
 from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy.sparse import hstack
-# Initialize separate vectorizers
+
+# Create separate vectorizers for title and text
 vectorizer_title = TfidfVectorizer()
 vectorizer_text = TfidfVectorizer()
 
-# Fit and transform each column
+# Transform both columns into sparse matrices
 X_title = vectorizer_title.fit_transform(df['Review_Title'].fillna(''))
 X_text = vectorizer_text.fit_transform(df['Review_Text'].fillna(''))
 
+# Combine them into one feature matrix
 X_combined = hstack([X_title, X_text])
 
+
+# ==============================
+# 📅 Date Feature Engineering
+# ==============================
+# Function: convert relative review dates (e.g., "2 months ago") into days
 def convert_review_date(text):
     if pd.isna(text):
-        return -1  # or np.nan
+        return -1  # unknown
     num = int(re.search(r'\d+', text).group())
     if 'day' in text:
         return num
@@ -89,22 +120,27 @@ def convert_review_date(text):
     elif 'year' in text:
         return num * 365
     else:
-        return -1  # unknown format
+        return -1  # if no match
 
 df['Review_Date'] = df['Review_Date'].apply(convert_review_date)
+
 df.head()
 
+# Convert scrape date into datetime and extract features
 df['Scrape_Date'] = pd.to_datetime(df['Scrape_Date'], format='%m/%d/%y')
-
 df['Scrape_Year'] = df['Scrape_Date'].dt.year
 df['Scrape_Month'] = df['Scrape_Date'].dt.month
 df['Scrape_Day'] = df['Scrape_Date'].dt.day
-df['Scrape_Weekday'] = df['Scrape_Date'].dt.weekday  # Monday=0, Sunday=6
-df=df.drop(['odd_symbols_text','odd_symbols_title','Scrape_Date','Brand','Review_Location'],axis=1)
+df['Scrape_Weekday'] = df['Scrape_Date'].dt.weekday  # Monday=0
 
-#will encode normally
-df.head()
+# Drop unnecessary columns
+df = df.drop(['odd_symbols_text','odd_symbols_title','Scrape_Date','Brand','Review_Location'], axis=1)
 
+
+# ==============================
+# 🔢 Encode Categorical Features
+# ==============================
+# Map product names to numeric values
 product_map = {
     'Daily Superfoliant': 0,
     'Daily Microfoliant': 1,
@@ -113,50 +149,63 @@ product_map = {
 }
 df['Product'] = df['Product'].map(product_map)
 
+# Encode Verified Buyer as binary
 verified_map = {'Yes': 1, 'No': 0}
 df['Verified_Buyer'] = df['Verified_Buyer'].map(verified_map)
 
 df.head()
 
+
+# ==============================
+#  Sentiment Analysis (VADER)
+# ==============================
 !pip install vaderSentiment
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-
 analyzer = SentimentIntensityAnalyzer()
 
+# Function: get compound score and convert to binary sentiment
 def vader_sentiment(text):
     if not isinstance(text, str) or text.strip() == "":
         return 0
     score = analyzer.polarity_scores(text)['compound']
     return 1 if score > 0 else 0
+
+# Fix spelling issue in reviews before analysis
 df['Review_Text'] = df['Review_Text'].str.replace(r'\bexcelent\b', 'excellent', regex=True)
 
+# Apply sentiment analysis
 df['Sentiment'] = df['Review_Text'].apply(vader_sentiment)
 df['Sentiment'].value_counts()
 
+
+# ==============================
+#  Machine Learning Model
+# ==============================
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
-from scipy.sparse import hstack
 
-
+# Define target variable
 y = df['Sentiment']
 
-# Train/test split
+# Split dataset into training and testing
 X_train, X_test, y_train, y_test = train_test_split(X_combined, y, test_size=0.2, random_state=42)
 
-from sklearn.linear_model import LogisticRegression
-
+# Train Logistic Regression model with balanced class weights
 model = LogisticRegression(class_weight='balanced')
 model.fit(X_train, y_train)
 
-# Predict
+# Predict on test set
 y_pred = model.predict(X_test)
 
+# Evaluate performance
 print("Accuracy:", accuracy_score(y_test, y_pred))
 print("Classification Report:\n", classification_report(y_test, y_pred))
 
-# Create prediction table
+# ==============================
+# 📊 Create Prediction Table
+# ==============================
 prediction_table = pd.DataFrame({
     'Actual': y_test.values,
     'Predicted': y_pred
