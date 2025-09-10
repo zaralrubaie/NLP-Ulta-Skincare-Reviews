@@ -67,3 +67,10 @@ This project demonstrates the full NLP pipeline:
    ```bash
    git clone https://github.com/zaralrubaie/nlp-ulta-skincare-reviews.git
    cd nlp-ulta-skincare-reviews
+   ````
+##  Project Structure  
+nlp-ulta-skincare-reviews/
+├── notebooks/
+│   └── nlp-ulta-skincare-reviews.py
+├── requirements.txt
+└── README.md
